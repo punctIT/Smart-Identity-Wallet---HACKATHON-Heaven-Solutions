@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, Any
 import threading
-import base64
+import ast
 
 from kivy.logger import Logger
 from kivy.metrics import dp, sp
@@ -11,8 +11,11 @@ from kivy.clock import Clock
 from kivy.uix.screenmanager import Screen
 from kivy.uix.label import Label
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.button import Button
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
+from kivy.graphics import Color, RoundedRectangle
 
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDRaisedButton, MDIconButton
@@ -20,318 +23,420 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.progressbar import MDProgressBar
 from kivymd.uix.card import MDCard
+from kivymd.uix.scrollview import MDScrollView
+from kivymd.uix.gridlayout import MDGridLayout
+from kivymd.uix.spinner import MDSpinner
+from kivymd.uix.menu import MDDropdownMenu
 
+from frontend.screens.popup_screens.pop_card import CardPopup
+import base64
+import json
+
+ASSETS_DIR = Path(__file__).parent.parent / "assets"
+LOGO_PATH = ASSETS_DIR / "test.png"
+
+def image_to_base64(image_path: str) -> str:
+    """
+    Convert an image file to base64 string.
+    
+    Args:
+        image_path: Path to the image file
+        
+    Returns:
+        Base64 encoded string of the image
+        
+    Raises:
+        FileNotFoundError: If image file is not found
+    """
+    try:
+        # ------------------------------------
+        # Here is where the image is read
+        with open(image_path, 'rb') as image_file:
+            image_data = image_file.read()
+        
+        # Encode to base64
+        base64_string = base64.b64encode(image_data).decode('utf-8')
+        
+        return base64_string
+        
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Image file not found: {image_path}")
+    except Exception as e:
+        raise ValueError(f"Error converting image to base64: {e}")
 
 class SaveScreen(Screen):
-    """Screen that processes OCR for scanned documents and allows editing of extracted data."""
-
+  
     def __init__(self, server=None, **kwargs):
         super().__init__(name='save_data', **kwargs)
         self.server = server
-        self.image_path: Optional[str] = None
-        self.image_base64: Optional[str] = None
-        self.ocr_data: Optional[Dict[str, Any]] = None
-        self.processing = False
+        self.input_fields = {}
+        self.selected_data_type = "ID Card"
         
-        # UI elements
-        self.progress_bar: Optional[MDProgressBar] = None
-        self.status_label: Optional[MDLabel] = None
-        self.fields_container: Optional[MDBoxLayout] = None
-        self.save_button: Optional[MDRaisedButton] = None
-        self.back_button: Optional[MDIconButton] = None
-        self.text_fields: Dict[str, MDTextField] = {}
+        # Main layout
+        self.main_layout = MDBoxLayout(orientation='vertical', padding=dp(20), spacing=dp(15))
         
-        self._build_ui()
-
-    def set_image_path(self, path: str) -> None:
-        """Set the path of the image to process and convert to base64."""
-        self.image_path = path
-        Logger.info(f"SaveScreen: Converting image to base64: {path}")
-        
-        try:
-            # Convert image to base64
-            with open(path, 'rb') as image_file:
-                image_data = image_file.read()
-                self.image_base64 = base64.b64encode(image_data).decode('utf-8')
-            
-            Logger.info(f"SaveScreen: Image converted to base64 (length: {len(self.image_base64)})")
-            
-            # Delete the original file after converting to base64
-            self._delete_image_file()
-            
-        except Exception as e:
-            Logger.error(f"SaveScreen: Failed to convert image to base64: {e}")
-            self.image_base64 = None
-
-    def _build_ui(self) -> None:
-        """Build the UI layout."""
-        self.main_box = BoxLayout(orientation='vertical', size_hint_y=1, spacing=dp(16), padding=[dp(24), dp(24), dp(24), 0])
-
-        # Header with back button and title
-        header = BoxLayout(
-            orientation="horizontal",
+        # Title
+        title = MDLabel(
+            text='Save Data Screen',
+            font_style='H4',
+            halign='center',
             size_hint_y=None,
-            height=dp(56),
-            spacing=dp(12),
+            height=dp(60)
         )
+        self.main_layout.add_widget(title)
         
-        self.back_button = MDIconButton(
-            icon="arrow-left",
-            theme_icon_color="Primary",
-            on_release=self._go_back,
-        )
-        header.add_widget(self.back_button)
-        
-        self.title_lbl = Label(
-            text="[color=#2696FF][b]PROCESARE DOCUMENT[/b][/color]",
-            markup=True,
-            font_size=sp(28),
-            color=(0.25, 0.60, 1.00, 1),
-            halign="left",
-            valign="middle"
-        )
-        self.title_lbl.bind(size=lambda instance, value: setattr(instance, "text_size", value))
-        header.add_widget(self.title_lbl)
-        self.main_box.add_widget(header)
-
-        # Subtitle
-        self.subtitle_lbl = Label(
-            text="Verificați și editați datele extrase din document.",
-            font_size=sp(16),
-            color=(0.7, 0.76, 0.86, 1),
+        # Dropdown menu for data type selection
+        dropdown_layout = MDBoxLayout(
+            orientation='horizontal',
             size_hint_y=None,
-            height=dp(28),
-            halign="left",
-            valign="middle"
-        )
-        self.subtitle_lbl.bind(size=lambda instance, value: setattr(instance, "text_size", value))
-        self.main_box.add_widget(self.subtitle_lbl)
-        
-        self.main_box.add_widget(Label(size_hint_y=None, height=dp(28)))
-
-        # Processing section
-        self.processing_card = MDCard(
-            orientation="vertical",
-            padding=dp(16),
-            spacing=dp(12),
-            size_hint_y=None,
-            height=dp(120),
-            elevation=2,
+            height=dp(60),
+            spacing=dp(10)
         )
         
-        self.status_label = MDLabel(
-            text="Pregătire pentru procesare...",
-            theme_text_color="Primary",
-            halign="center",
-            font_style="Body1",
+        dropdown_label = MDLabel(
+            text='Data Type:',
+            size_hint_x=0.3,
+            font_style='Body1'
         )
-        self.processing_card.add_widget(self.status_label)
+        dropdown_layout.add_widget(dropdown_label)
         
-        self.progress_bar = MDProgressBar(
-            size_hint_y=None,
-            height=dp(4),
+        self.dropdown_button = MDRaisedButton(
+            text=self.selected_data_type,
+            size_hint_x=0.7,
+            on_release=self.open_dropdown_menu
         )
-        self.processing_card.add_widget(self.progress_bar)
-        self.main_box.add_widget(self.processing_card)
-
-        # Fields container for OCR results
-        self.fields_container = MDBoxLayout(
-            orientation="vertical",
-            spacing=dp(12),
-            size_hint_y=None,
-        )
-        self.fields_container.bind(minimum_height=self.fields_container.setter('height'))
+        dropdown_layout.add_widget(self.dropdown_button)
         
-        # Wrap fields in scroll view
-        fields_scroll = ScrollView()
-        fields_scroll.add_widget(self.fields_container)
-        self.main_box.add_widget(fields_scroll)
-
+        self.main_layout.add_widget(dropdown_layout)
+        
+        # Create dropdown menu items
+        menu_items = [
+            {
+                "text": "ID Card",
+                "viewclass": "OneLineListItem",
+                "on_release": lambda x="ID Card": self.set_data_type(x),
+            },
+            {
+                "text": "Passport",
+                "viewclass": "OneLineListItem",
+                "on_release": lambda x="Passport": self.set_data_type(x),
+            },
+            {
+                "text": "Driver License",
+                "viewclass": "OneLineListItem",
+                "on_release": lambda x="Driver License": self.set_data_type(x),
+            },
+            {
+                "text": "Other Document",
+                "viewclass": "OneLineListItem",
+                "on_release": lambda x="Other Document": self.set_data_type(x),
+            },
+        ]
+        
+        self.dropdown_menu = MDDropdownMenu(
+            caller=self.dropdown_button,
+            items=menu_items,
+            width_mult=4,
+        )
+        
+        # Loading layout (initially hidden)
+        self.loading_layout = MDBoxLayout(
+            orientation='vertical',
+            size_hint=(1, 1),
+            spacing=dp(20)
+        )
+        
+        loading_card = MDCard(
+            orientation='vertical',
+            size_hint=(None, None),
+            size=(dp(300), dp(200)),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            padding=dp(30),
+            spacing=dp(20),
+            elevation=5
+        )
+        
+        loading_label = MDLabel(
+            text='Processing OCR...',
+            halign='center',
+            font_style='H6'
+        )
+        
+        spinner = MDSpinner(
+            size_hint=(None, None),
+            size=(dp(46), dp(46)),
+            pos_hint={'center_x': 0.5},
+            active=True
+        )
+        
+        loading_card.add_widget(loading_label)
+        loading_card.add_widget(spinner)
+        self.loading_layout.add_widget(loading_card)
+        
+        # Content layout
+        self.content_layout = MDBoxLayout(orientation='vertical', spacing=dp(15))
+        
+        # Scroll view with grid layout
+        scroll = MDScrollView(size_hint=(1, 1))
+        self.grid_layout = MDGridLayout(
+            cols=1,
+            adaptive_height=True,
+            spacing=dp(10),
+            padding=dp(10)
+        )
+        scroll.add_widget(self.grid_layout)
+        self.content_layout.add_widget(scroll)
+        
         # Save button
-        self.save_button = MDRaisedButton(
-            text="Salvează Date",
-            size_hint_y=None,
-            height=dp(40),
-            disabled=True,
-            opacity=0,
-            on_release=self._save_data,
+        save_btn = MDRaisedButton(
+            text='Save Data',
+            size_hint=(1, None),
+            height=dp(60),
+            on_release=self.save_data
         )
-        self.main_box.add_widget(self.save_button)
+        self.content_layout.add_widget(save_btn)
         
-        self.add_widget(self.main_box)
-
-    def on_pre_enter(self, *args):
-        """Called when screen is about to be entered."""
-        if self.image_base64 and not self.processing:
-            Logger.info("SaveScreen: Starting OCR processing")
-            self._start_ocr_processing()
-        return super().on_pre_enter(*args)
-
-    def _start_ocr_processing(self) -> None:
-        """Start OCR processing in background thread."""
-        if self.processing:
-            return
-            
-        self.processing = True
-        self.progress_bar.start()
-        self.status_label.text = "Procesez documentul..."
+        # Start with loading screen
+        self.main_layout.add_widget(self.loading_layout)
+        self.add_widget(self.main_layout)
         
-        # Hide fields and save button during processing
-        self.fields_container.clear_widgets()
-        self.text_fields.clear()
-        self.save_button.disabled = True
-        self.save_button.opacity = 0
+    def on_enter(self, *args):
+        # Show loading screen
+        self.show_loading(True)
         
-        # Start processing in background thread
-        thread = threading.Thread(target=self._process_ocr)
-        thread.daemon = True
-        thread.start()
-
-    def _process_ocr(self) -> None:
-        """Process OCR in background thread."""
+        # Process OCR in background thread
+        threading.Thread(target=self.process_ocr, daemon=True).start()
+        
+        return super().on_enter(*args)
+    
+    def show_loading(self, show: bool):
+        """Toggle between loading and content view"""
+        if show:
+            if self.content_layout in self.main_layout.children:
+                self.main_layout.remove_widget(self.content_layout)
+            if self.loading_layout not in self.main_layout.children:
+                self.main_layout.add_widget(self.loading_layout)
+        else:
+            if self.loading_layout in self.main_layout.children:
+                self.main_layout.remove_widget(self.loading_layout)
+            if self.content_layout not in self.main_layout.children:
+                self.main_layout.add_widget(self.content_layout)
+    
+    def process_ocr(self):
+        """Process OCR in background thread"""
         try:
-            if not self.server or not hasattr(self.server, 'sent_OCR_image'):
-                raise Exception("Server connection not available")
+            img = image_to_base64(LOGO_PATH)
+            data = self.server.sent_OCR_image(img)
+            print(data)
             
-            if not self.image_base64:
-                raise Exception("No image data available")
-                
-            Logger.info(f"SaveScreen: Sending base64 image for OCR (length: {len(self.image_base64)})")
-            
-            # Send base64 string to server for OCR processing
-            ocr_result = self.server.sent_OCR_image(self.image_base64)
-            
-            if ocr_result:
-                Logger.info("SaveScreen: OCR processing successful")
-                # Schedule UI update on main thread
-                Clock.schedule_once(lambda dt: self._on_ocr_success(ocr_result), 0)
+            # Schedule UI update on main thread
+            if data and data.get('success') and 'data' in data:
+                result_str = data['data'].get('result', '{}')
+                # Parse the string representation of dict
+                result_dict = ast.literal_eval(result_str)
+                Clock.schedule_once(lambda dt: self.on_ocr_complete(result_dict), 0)
             else:
-                Logger.error("SaveScreen: OCR processing failed")
-                Clock.schedule_once(lambda dt: self._on_ocr_error("OCR processing failed"), 0)
+                Clock.schedule_once(lambda dt: self.on_ocr_error("Invalid response format"), 0)
                 
         except Exception as e:
-            error_msg = str(e)
-            Logger.error(f"SaveScreen: OCR error: {error_msg}")
-            Clock.schedule_once(lambda dt: self._on_ocr_error(error_msg), 0)
-
-    def _on_ocr_success(self, result: Dict[str, Any]) -> None:
-        """Handle successful OCR result on main thread."""
-        self.processing = False
-        self.progress_bar.stop()
-        self.status_label.text = "Procesare completă! Verificați și editați datele:"
+            Logger.error(f"SaveScreen: Error in process_ocr: {e}")
+            Clock.schedule_once(lambda dt: self.on_ocr_error(str(e)), 0)
+    
+    def on_ocr_complete(self, result_dict):
+        """Called when OCR processing is complete"""
+        self.show_loading(False)
+        self.add_elements(result_dict)
+    
+    def on_ocr_error(self, error_msg):
+        """Called when OCR processing fails"""
+        self.show_loading(False)
+        Logger.error(f"SaveScreen: OCR Error: {error_msg}")
         
-        self.ocr_data = result
-        self._build_editable_fields(result)
-        self.save_button.disabled = False
-        self.save_button.opacity = 1
-
-    def _on_ocr_error(self, error_msg: str) -> None:
-        """Handle OCR error on main thread."""
-        self.processing = False
-        self.progress_bar.stop()
-        self.status_label.text = f"Eroare la procesare: {error_msg}"
-        
-        # Add retry button
-        retry_btn = MDRaisedButton(
-            text="Încearcă din nou",
+        # Show error message
+        error_card = MDCard(
+            orientation='vertical',
             size_hint_y=None,
-            height=dp(40),
-            on_release=lambda *_: self._start_ocr_processing(),
+            height=dp(80),
+            padding=dp(15),
+            elevation=2
         )
-        self.fields_container.add_widget(retry_btn)
-
-    def _build_editable_fields(self, data: Dict[str, Any]) -> None:
-        """Build editable text fields from OCR data."""
-        self.fields_container.clear_widgets()
-        self.text_fields.clear()
+        error_label = MDLabel(
+            text=f"Error: {error_msg}\nShowing empty fields...",
+            theme_text_color='Error',
+            halign='center'
+        )
+        error_card.add_widget(error_label)
+        self.grid_layout.add_widget(error_card)
         
-        # Extract relevant data from OCR response
-        ocr_content = data.get('content', {})
+        # Add empty fields based on data type
+        empty_fields = self.get_empty_fields_for_type()
+        self.add_elements(empty_fields)
+    
+    def open_dropdown_menu(self, *args):
+        """Open the dropdown menu for data type selection"""
+        self.dropdown_menu.open()
+    
+    def set_data_type(self, data_type: str):
+        """Set the selected data type"""
+        self.selected_data_type = data_type
+        self.dropdown_button.text = data_type
+        self.dropdown_menu.dismiss()
+        Logger.info(f"SaveScreen: Data type set to {data_type}")
+    def get_entrypoint(self,text):
+        if text=='ID Card':
+            return "InsertIdenityCard"
+        if text=='Passport':
+            return "InsertPassport"
+        if text=='Driver License':
+            return "InsertDrivingLicense"
+            
+    def get_empty_fields_for_type(self):
+        """Get empty fields template based on selected data type"""
+        templates = {
+            "ID Card": {
+                "first_name": "",
+                "last_name": "",
+                "serie": "",
+                "nr": "",
+                "place_of_birth": "",
+                "address": "",
+                "cnp": "",
+                "expiration_date": ""
+            },
+            "Passport": {
+                "first_name": "",
+                "last_name": "",
+                "passport_number": "",
+                "nationality": "",
+                "date_of_birth": "",
+                "place_of_birth": "",
+                "issue_date": "",
+                "expiration_date": ""
+            },
+            "Driver License": {
+                "first_name": "",
+                "last_name": "",
+                "license_number": "",
+                "category": "",
+                "issue_date": "",
+                "expiration_date": "",
+                "address": ""
+            },
+            "Other Document": {
+                "field_1": "",
+                "field_2": "",
+                "field_3": "",
+                "field_4": "",
+                "field_5": ""
+            }
+        }
         
-        if isinstance(ocr_content, dict):
-            # If content is structured data, create fields for each key
-            for key, value in ocr_content.items():
-                if isinstance(value, (str, int, float)):
-                    field_name = key.replace('_', ' ').title()
-                    field = MDTextField(
-                        hint_text=field_name,
-                        text=str(value),
-                        size_hint_y=None,
-                        height=dp(56),
-                    )
-                    self.text_fields[key] = field
-                    self.fields_container.add_widget(field)
-        elif isinstance(ocr_content, str):
-            # If content is a string, create a simple text area
-            field = MDTextField(
-                hint_text="Text Extras",
-                text=ocr_content,
-                multiline=True,
+        return templates.get(self.selected_data_type, templates["ID Card"])
+    
+    def clear_elements(self, *args):
+        """Clear all elements from the grid layout"""
+        self.grid_layout.clear_widgets()
+        self.input_fields.clear()
+        Logger.info("SaveScreen: Cleared all elements")
+    
+    def add_elements(self, data: Dict[str, Any]):
+        """
+        Add elements to the grid based on the provided dictionary.
+        
+        Args:
+            data: Dictionary with key-value pairs to display
+        """
+        for key, value in data.items():
+            # Create a card for each item
+            card = MDCard(
+                orientation='vertical',
                 size_hint_y=None,
-                height=dp(120),
+                height=dp(100),
+                padding=dp(10),
+                spacing=dp(5),
+                elevation=2
             )
-            self.text_fields['extracted_text'] = field
-            self.fields_container.add_widget(field)
-        else:
-            # Fallback: create a general text field
-            field = MDTextField(
-                hint_text="Date Extrase",
-                text=str(data),
-                multiline=True,
-                size_hint_y=None,
-                height=dp(120),
+            
+            # Create box layout for label and input
+            item_layout = MDBoxLayout(
+                orientation='horizontal',
+                spacing=dp(10)
             )
-            self.text_fields['raw_data'] = field
-            self.fields_container.add_widget(field)
-
-    def _save_data(self, *args) -> None:
-        """Save the edited data."""
-        if not self.text_fields:
-            return
             
-        # Collect data from all fields
-        edited_data = {}
-        for key, field in self.text_fields.items():
-            edited_data[key] = field.text.strip()
-        
-        Logger.info(f"SaveScreen: Saving edited data: {edited_data}")
-        print(f"💾 Date salvate: {edited_data}")
-        
-        # TODO: Here you can add code to save the data to database, 
-        # send to server, or store locally as needed
-        
-        # Show success and go back
-        self.status_label.text = "Date salvate cu succes!"
-        Clock.schedule_once(lambda dt: self._go_back(), 1.5)
-
-    def _delete_image_file(self) -> None:
-        """Delete the original image file."""
-        if not self.image_path:
-            return
+            # Label for the key
+            label = MDLabel(
+                text=str(key),
+                size_hint_x=0.3,
+                font_style='Body1'
+            )
+            item_layout.add_widget(label)
             
-        try:
-            image_path = Path(self.image_path)
-            if image_path.exists():
-                image_path.unlink()
-                Logger.info(f"SaveScreen: Deleted original image: {self.image_path}")
-        except Exception as e:
-            Logger.warning(f"SaveScreen: Failed to delete image: {e}")
-
-    def _go_back(self, *args) -> None:
-        """Navigate back to previous screen."""
-        # Reset state
-        self.image_path = None
-        self.image_base64 = None
-        self.ocr_data = None
-        self.processing = False
-        self.fields_container.clear_widgets()
-        self.text_fields.clear()
-        
-        manager = getattr(self, "manager", None)
-        if not manager:
-            return
+            # Text input for the value
+            text_input = MDTextField(
+                text=str(value),
+                hint_text=f'Enter {key}',
+                size_hint_x=0.7,
+                mode='rectangle'
+            )
+            self.input_fields[key] = text_input
+            item_layout.add_widget(text_input)
             
-        if manager.has_screen("home"):
-            manager.current = "home"
-        else:
-            manager.current = manager.previous()
+            card.add_widget(item_layout)
+            self.grid_layout.add_widget(card)
+        
+        Logger.info(f"SaveScreen: Added {len(data)} elements")
+    
+    def display_data(self, *args):
+        """Display all data from input fields"""
+        collected_data = {}
+        for key, text_field in self.input_fields.items():
+            collected_data[key] = text_field.text
+        
+        print("=" * 50)
+        print("Collected Data:")
+        for key, value in collected_data.items():
+            print(f"  {key}: {value}")
+        print("=" * 50)
+        
+        Logger.info(f"SaveScreen: Displayed data: {collected_data}")
+        return collected_data
+    
+    def clean_data(self,data):
+        # Exemplu de curățare pentru fiecare cheie
+        cleaned = {}
+        for key, value in data.items():
+            val = value.strip() if isinstance(value, str) else value
+            if key in ("nr",):  # Dacă e număr
+                try:
+                    val = int(val)
+                except Exception:
+                    pass
+            if key == "expiration_date":
+                # Formatare exemplu: din "120522" -> "2022-05-12"
+                if len(val) == 6 and val.isdigit():
+                    day, month, year = val[:2], val[2:4], "20" + val[4:]
+                    val = f"{year}-{month}-{day}"
+            cleaned[key] = val
+        return cleaned
+    def save_data(self, *args):
+        """Save all data from input fields as JSON"""
+        import json
+        collected_data = {}
+        for key, text_field in self.input_fields.items():
+            collected_data[key] = text_field.text
+
+        # Curățare date
+        collected_data = self.clean_data(collected_data)
+
+        # Convert to JSON string
+        json_data = json.dumps(collected_data, indent=2, ensure_ascii=False)
+
+        # Trimite la server
+        response = self.server.sent_specific_data(self.get_entrypoint(self.selected_data_type), json_data)
+        print(response)
+        self.manager.current = 'home'
+        print(json_data)
+        print("=" * 50)
+        
+        Logger.info(f"SaveScreen: Saved data as JSON")
+        return json_data

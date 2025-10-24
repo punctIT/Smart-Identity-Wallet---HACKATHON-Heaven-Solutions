@@ -39,7 +39,7 @@ class AI_DataRequester:
     def sent_OCR_image(self, img_base64):
         try:
             payload = {
-                "message_type": "QCR",
+                "message_type": "OCR",
                 "user_id": self.user_id, 
                 "content": img_base64,
                 "token": self.token

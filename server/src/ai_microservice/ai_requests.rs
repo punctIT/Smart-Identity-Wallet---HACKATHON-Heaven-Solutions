@@ -10,7 +10,7 @@ impl AiRequests {
     pub async fn handle_ai_reqsuest(
         ExtractJson(request): ExtractJson<MessageRequest>,
     ) -> Json<MessageResponse> {
-        println!("📨 Request primit: {:?}", request);
+        println!("📨 AI Request primit: {:?}", request);
         let (success, data) = match request.message_type.as_str() {
             "ChatBot" => AiRequests::call_python_chat(&request).await,
             "OCR" => AiRequests::call_python_ocr(&request).await,
@@ -48,7 +48,7 @@ impl AiRequests {
 
     pub async fn call_python_ocr(request: &MessageRequest) -> (bool, Value) {
         let client = Client::new();
-
+        println!("aici ceva");
         let response = match client
             .post("http://localhost:8001/ocr")
             .json(&request)
@@ -59,11 +59,9 @@ impl AiRequests {
             Err(e) => return ResponseHandler::standard_error(e.to_string()),
         };
 
-        let chat_response = match response.json().await{
-            Ok(e)=>e,
-            Err(_)=>return ResponseHandler::standard_error(String::from("unknown request")),
-        };
-        println!("{:?}", chat_response);
+        let chat_response: Value = response.json().await.unwrap();
+
+        //println!("{:?}", chat_response);
 
         (true, chat_response)
     }

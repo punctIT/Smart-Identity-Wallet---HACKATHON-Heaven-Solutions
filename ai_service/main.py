@@ -37,6 +37,7 @@ async def chat(request: MessageRequest):
     return response
 
 @app.post("/ocr")
-async def ocr(file: MessageRequest):
-    print(file)
-    return str(ocr.process_id_card_from_base64(file))
+async def ocr_endpoint(request: MessageRequest):
+    print("ceva")
+    result = ocr.process_id_card_from_base64(request.content)
+    return {"result": str(result)}
