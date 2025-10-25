@@ -319,7 +319,28 @@ class CameraScanScreen(MDScreen, Alignment):
         def on_picture(_, filepath):
             Logger.info(f"CameraScanScreen: Photo saved -> {filepath}")
             print(f"[Camera] photo saved -> {filepath}", flush=True)
+
+            original_path = Path(filepath)
+            new_filename = f"document.jpg"
+            new_filepath = original_path.parent / new_filename
             
+            try:
+                # If target file already exists, remove it first
+                if new_filepath.exists():
+                    print(f"[Camera] Removing existing {new_filepath}", flush=True)
+                    new_filepath.unlink()
+                
+                # Rename the file to document.jpg
+                print(f"[Camera] Attempting to rename {original_path} to {new_filepath}", flush=True)
+                original_path.rename(new_filepath)
+                Logger.info(f"CameraScanScreen: Photo renamed to -> {new_filepath}")
+                print(f"[Camera] Successfully renamed to -> {new_filepath}", flush=True)
+                final_path = new_filepath
+            except Exception as e:
+                Logger.warning(f"CameraScanScreen: Failed to rename photo: {e}")
+                print(f"[Camera] Rename failed: {e}, keeping original: {original_path}", flush=True)
+                final_path = original_path
+
             # Notify Android media scanner if available
             if platform == "android" and MediaScannerConnection:
                 try:
@@ -329,7 +350,7 @@ class CameraScanScreen(MDScreen, Alignment):
                     Logger.warning(f"CameraScanScreen: Failed to notify media scanner: {e}")
             
             # Use Clock.schedule_once to ensure UI updates happen on main thread
-            Clock.schedule_once(lambda dt: self._on_capture_completed(Path(filepath)), 0)
+            Clock.schedule_once(lambda dt: self._on_capture_completed(Path(final_path)), 0)
 
         camera.bind(on_picture_taken=on_picture)
 
